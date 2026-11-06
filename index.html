@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<title>気づきの散歩</title>
+<title>散歩</title>
 <style>
   :root{--bg:#0d0d0d;--fg:#d8d4cc;--dim:#5a5750;--red:#d23a2a}
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -32,7 +32,7 @@
 </head>
 <body>
 <main>
-  <h1>気づきの散歩</h1>
+  <h1>散歩</h1>
   <div class="sub">歩くたびに鳴り、少し遅れて返ってくる</div>
 
   <svg viewBox="0 0 200 200" aria-hidden="true">
@@ -73,13 +73,6 @@
   </details>
 
   <details>
-    <summary>── 声</summary>
-    <div class="row"><label>言葉（,で順番に）</label><input type="text" id="words" value="気づき"></div>
-    <div class="row"><label>何歩に一回（0で無音）</label><input type="range" id="every" min="0" max="40" step="1" value="8"><output></output></div>
-    <div class="row"><label>声の大きさ</label><input type="range" id="vvol" min="0" max="1" step="0.05" value="0.7"><output></output></div>
-  </details>
-
-  <details>
     <summary>── 感度</summary>
     <div class="row"><label>一歩とみなす揺れ</label><input type="range" id="thr" min="0.6" max="5" step="0.1" value="1.8"><output></output></div>
     <div class="row"><label>次の一歩までの最短（秒）</label><input type="range" id="gap" min="0.18" max="0.8" step="0.01" value="0.3"><output></output></div>
@@ -95,7 +88,7 @@
 <script>
 (function(){
   const $ = id => document.getElementById(id);
-  const ids = ['popOn','vol','pitch','echoOn','delay','fb','water','cycle','accentOn','words','every','vvol','thr','gap'];
+  const ids = ['popOn','vol','pitch','echoOn','delay','fb','water','cycle','accentOn','thr','gap'];
   // 設定の保存（使えない環境では黙って諦める）
   function save(){ try{ const o={}; ids.forEach(k=>{const e=$(k); o[k]=e.type==='checkbox'?e.checked:e.value}); localStorage.setItem('sanpo',JSON.stringify(o)); }catch(e){} }
   try{ const o=JSON.parse(localStorage.getItem('sanpo')||'{}'); ids.forEach(k=>{ if(o[k]===undefined) return; const e=$(k); if(e.type==='checkbox') e.checked=o[k]; else e.value=o[k]; }); }catch(e){}
@@ -107,7 +100,27 @@
 
   // ── 音の仕組み
   let ctx=null, master, dry, delayNode, fbGain, wet, lp;
+
+  // iPhoneのマナーモードでも鳴るように：音の扱いを「再生」に切り替える
+  let unlocked=false;
+  function unlockIOS(){
+    if(unlocked) return; unlocked=true;
+    try{ if(navigator.audioSession) navigator.audioSession.type='playback'; }catch(e){}
+    try{
+      // 無音のwavをループ再生しておくと、古いiOSでもマナースイッチを無視して鳴る
+      const sr=8000,n=sr/2,b=new ArrayBuffer(44+n*2),v=new DataView(b);
+      const w=(o,str)=>{for(let i=0;i<str.length;i++)v.setUint8(o+i,str.charCodeAt(i))};
+      w(0,'RIFF');v.setUint32(4,36+n*2,true);w(8,'WAVE');w(12,'fmt ');v.setUint32(16,16,true);
+      v.setUint16(20,1,true);v.setUint16(22,1,true);v.setUint32(24,sr,true);v.setUint32(28,sr*2,true);
+      v.setUint16(32,2,true);v.setUint16(34,16,true);w(36,'data');v.setUint32(40,n*2,true);
+      const a=document.createElement('audio');
+      a.src=URL.createObjectURL(new Blob([b],{type:'audio/wav'}));
+      a.loop=true; a.setAttribute('playsinline',''); a.setAttribute('x-webkit-airplay','deny');
+      const p=a.play(); if(p&&p.catch) p.catch(()=>{});
+    }catch(e){}
+  }
   function initAudio(){
+    unlockIOS();
     if(ctx) return;
     const AC = window.AudioContext||window.webkitAudioContext;
     ctx = new AC();
@@ -166,17 +179,6 @@
     }
   }
 
-  // ── 声
-  let wordIdx=0;
-  function speak(){
-    if(!('speechSynthesis' in window)) return;
-    const list=$('words').value.split(/[,、，]/).map(s=>s.trim()).filter(Boolean);
-    if(!list.length) return;
-    const u=new SpeechSynthesisUtterance(list[wordIdx%list.length]); wordIdx++;
-    u.lang='ja-JP'; u.rate=0.85; u.volume=+$('vvol').value;
-    speechSynthesis.cancel(); speechSynthesis.speak(u);
-  }
-
   // ── 円の表示
   const C=100, R=78;
   function drawTicks(){
@@ -211,8 +213,6 @@
     steps++;
     $('steps').textContent=steps;
     moveDot();
-    const every=+$('every').value;
-    if(every>0 && steps%every===0) speak();
   }
 
   // ── 揺れから一歩を拾う
@@ -228,27 +228,27 @@
   }
 
   let running=false;
-  async function start(){
-    initAudio();
-    try{ await ctx.resume(); }catch(e){}
-    // iOSで声を使えるように、最初の操作で空の発声をしておく
-    try{ const u=new SpeechSynthesisUtterance(' '); u.volume=0; speechSynthesis.speak(u); }catch(e){}
+  function start(){
+    // 許可の要求は、タップの直後に「待たずに」呼ぶ必要がある（iOSの決まり）
+    let permP;
     if(typeof DeviceMotionEvent!=='undefined' && typeof DeviceMotionEvent.requestPermission==='function'){
-      try{
-        const r=await DeviceMotionEvent.requestPermission();
-        if(r!=='granted'){ $('msg').textContent='動きの許可が出ませんでした。設定 → Safari →「モーションと画面の向きのアクセス」を確認。'; return; }
-      }catch(e){ $('msg').textContent='許可を求められませんでした（https で開いているか確認）'; return; }
-    }
-    window.addEventListener('devicemotion',onMotion);
-    running=true; $('start').textContent='とめる'; $('start').classList.add('on'); $('msg').textContent='';
-    setTimeout(()=>{ if(running && steps===0 && base===9.8) $('msg').textContent='揺れが届いていません。このブラウザ／開き方ではセンサーが使えないかもしれません。'; },3000);
+      try{ permP = DeviceMotionEvent.requestPermission(); }catch(e){ permP = Promise.reject(e); }
+    } else { permP = Promise.resolve('granted'); }
+    initAudio();
+    try{ ctx.resume(); }catch(e){}
+    permP.then(r=>{
+      if(r!=='granted'){ $('msg').textContent='動きの許可が出ませんでした。一度断った場合は、Safariを完全に閉じて開き直すと、もう一度聞かれます。'; return; }
+      window.addEventListener('devicemotion',onMotion);
+      running=true; $('start').textContent='とめる'; $('start').classList.add('on'); $('msg').textContent='';
+      setTimeout(()=>{ if(running && steps===0 && base===9.8) $('msg').textContent='揺れが届いていません。このブラウザ／開き方ではセンサーが使えないかもしれません。'; },3000);
+    }).catch(e=>{ $('msg').textContent='許可の確認でエラー：'+(e&&e.message?e.message:e); });
   }
   function stop(){
     window.removeEventListener('devicemotion',onMotion);
     running=false; $('start').textContent='はじめる'; $('start').classList.remove('on');
   }
   $('start').addEventListener('click',()=> running?stop():start());
-  $('test').addEventListener('click',async()=>{ initAudio(); try{await ctx.resume();}catch(e){} step(); });
+  $('test').addEventListener('click',()=>{ initAudio(); try{ctx.resume();}catch(e){} step(); });
 })();
 </script>
 </body>
