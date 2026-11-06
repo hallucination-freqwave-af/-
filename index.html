@@ -50,6 +50,20 @@
   <details open>
     <summary>── 音</summary>
     <div class="row"><label>踏んだ音</label><input type="checkbox" id="popOn" checked></div>
+    <div class="row"><label>音色</label>
+      <select id="voice">
+        <option data-mode value="random">ランダム（一歩ごとに変わる）</option>
+        <option data-mode value="cycle">めぐり（区切りごとに変わる）</option>
+      </select></div>
+    <div class="row"><label>音階（歩くと旋律に）</label>
+      <select id="scale">
+        <option value="none">なし（同じ高さ）</option>
+        <option value="0,2,4,7,9" selected>五音（明るい）</option>
+        <option value="0,1,5,7,8">都節（和の陰）</option>
+        <option value="0,4,5,7,11">琉球</option>
+        <option value="0,3,5,7,10">ブルース寄り</option>
+        <option value="0,2,3,5,7,8,10">短調</option>
+      </select></div>
     <div class="row"><label>音量</label><input type="range" id="vol" min="0" max="1" step="0.05" value="0.6"><output></output></div>
     <div class="row"><label>音の高さ</label><input type="range" id="pitch" min="200" max="1200" step="10" value="660"><output></output></div>
     <div class="row"><label>エコー</label><input type="checkbox" id="echoOn" checked></div>
@@ -88,7 +102,7 @@
 <script>
 (function(){
   const $ = id => document.getElementById(id);
-  const ids = ['popOn','vol','pitch','echoOn','delay','fb','water','cycle','accentOn','thr','gap'];
+  const ids = ['voice','scale','popOn','vol','pitch','echoOn','delay','fb','water','cycle','accentOn','thr','gap'];
   // 設定の保存（使えない環境では黙って諦める）
   function save(){ try{ const o={}; ids.forEach(k=>{const e=$(k); o[k]=e.type==='checkbox'?e.checked:e.value}); localStorage.setItem('sanpo',JSON.stringify(o)); }catch(e){} }
   try{ const o=JSON.parse(localStorage.getItem('sanpo')||'{}'); ids.forEach(k=>{ if(o[k]===undefined) return; const e=$(k); if(e.type==='checkbox') e.checked=o[k]; else e.value=o[k]; }); }catch(e){}
@@ -150,32 +164,92 @@
     const d=noiseBuf.getChannelData(0); for(let i=0;i<d.length;i++) d[i]=Math.random()*2-1;
     return noiseBuf;
   }
-  function pop(accent){
-    if(!ctx || !$('popOn').checked) return;
-    const t=ctx.currentTime, w=+$('water').value;
-    const base = +$('pitch').value * (accent?0.5:1);
-    const jitter = 1 + (Math.random()*2-1)*0.35*w;      // 水たまり：一歩ごとに音程が揺れる
-    const f0 = base*jitter*1.6, f1 = base*jitter;
-    // ポンッ：高めから一気に落ちる短い音
-    const o=ctx.createOscillator(), g=ctx.createGain();
-    o.type = accent ? 'triangle' : 'sine';
-    o.frequency.setValueAtTime(f0,t);
-    o.frequency.exponentialRampToValueAtTime(f1,t+0.06);
-    const peak = accent?0.9:0.6;
+  // ── 音色（すべてその場で合成。録音素材は使わない）
+  function env(g,t,peak,att,dec){
     g.gain.setValueAtTime(0.0001,t);
-    g.gain.exponentialRampToValueAtTime(peak,t+0.005);
-    g.gain.exponentialRampToValueAtTime(0.0001,t+(accent?0.35:0.18));
-    o.connect(g); g.connect(dry); o.start(t); o.stop(t+0.4);
-    // 水音：揺らぎがあるときだけ、帯域を走らせたノイズを薄く重ねる
-    if(w>0.02){
-      const n=ctx.createBufferSource(); n.buffer=noise();
-      const bp=ctx.createBiquadFilter(); bp.type='bandpass'; bp.Q.value=6+8*Math.random();
-      const fs=800+Math.random()*1800*w;
-      bp.frequency.setValueAtTime(fs,t); bp.frequency.exponentialRampToValueAtTime(fs*(2+w*2),t+0.09);
-      const ng=ctx.createGain();
-      ng.gain.setValueAtTime(0.0001,t); ng.gain.exponentialRampToValueAtTime(0.5*w,t+0.008);
-      ng.gain.exponentialRampToValueAtTime(0.0001,t+0.12);
-      n.connect(bp); bp.connect(ng); ng.connect(dry); n.start(t); n.stop(t+0.15);
+    g.gain.exponentialRampToValueAtTime(Math.max(peak,0.0002),t+att);
+    g.gain.exponentialRampToValueAtTime(0.0001,t+att+dec);
+  }
+  function tone(type,f,t,peak,att,dec,out,f2){
+    const o=ctx.createOscillator(),g=ctx.createGain();
+    o.type=type; o.frequency.setValueAtTime(f,t);
+    if(f2) o.frequency.exponentialRampToValueAtTime(f2,t+Math.min(dec,0.08));
+    env(g,t,peak,att,dec); o.connect(g); g.connect(out); o.start(t); o.stop(t+att+dec+0.05);
+    return o;
+  }
+  function burst(t,peak,dec,ftype,fq,q,out,fq2){
+    const n=ctx.createBufferSource(); n.buffer=noise();
+    const f=ctx.createBiquadFilter(); f.type=ftype; f.frequency.setValueAtTime(fq,t); f.Q.value=q;
+    if(fq2) f.frequency.exponentialRampToValueAtTime(fq2,t+dec);
+    const g=ctx.createGain(); env(g,t,peak,0.003,dec);
+    n.connect(f); f.connect(g); g.connect(out); n.start(t); n.stop(t+dec+0.05);
+  }
+  const ksCache={};
+  function pluckBuf(f){
+    const key=Math.round(f); if(ksCache[key]) return ksCache[key];
+    const sr=ctx.sampleRate,len=Math.floor(sr*1.2),b=ctx.createBuffer(1,len,sr),d=b.getChannelData(0);
+    const p=Math.max(2,Math.round(sr/f)),ring=new Float32Array(p);
+    for(let i=0;i<p;i++) ring[i]=Math.random()*2-1;
+    let idx=0; for(let i=0;i<len;i++){ const nx=(idx+1)%p; const v=ring[idx]; d[i]=v; ring[idx]=0.996*0.5*(v+ring[nx]); idx=nx; }
+    return ksCache[key]=b;
+  }
+  const VOICES={
+    pon:{n:'ポン',      f:(t,f,a,o)=>tone(a?'triangle':'sine',f*1.6,t,a?.9:.6,.005,a?.35:.18,o,f)},
+    shizuku:{n:'水滴',  f:(t,f,a,o)=>tone('sine',f*0.8,t,a?.8:.55,.003,.12,o,f*2.6)},
+    ame:{n:'雨粒',      f:(t,f,a,o)=>{ tone('sine',f*1.1,t,.4,.002,.07,o,f*2.4); tone('sine',f*1.5,t+.05+Math.random()*.06,.25,.002,.06,o,f*3); }},
+    mokkin:{n:'木琴',   f:(t,f,a,o)=>{ tone('sine',f,t,a?.8:.6,.002,.28,o); tone('sine',f*4,t,.18,.001,.06,o); }},
+    suzu:{n:'鈴',       f:(t,f,a,o)=>{ [3,4.2,5.4,6.8].forEach((m,i)=>tone('sine',f*m*(1+Math.random()*.004),t+i*.004,.18,.002,.5+Math.random()*.3,o)); }},
+    orin:{n:'おりん',   f:(t,f,a,o)=>{ [[1,.5],[2.76,.25],[5.4,.12],[8.93,.06]].forEach(([m,v])=>{ tone('sine',f*m,t,v,.004,2.6,o); tone('sine',f*m*1.003,t,v*.6,.004,2.4,o); }); }},
+    kane:{n:'鐘',       f:(t,f,a,o)=>{ const c=ctx.createOscillator(),m=ctx.createOscillator(),mg=ctx.createGain(),g=ctx.createGain();
+                          c.frequency.value=f*0.5; m.frequency.value=f*0.5*1.4; mg.gain.setValueAtTime(f*1.2,t); mg.gain.exponentialRampToValueAtTime(1,t+1.6);
+                          m.connect(mg); mg.connect(c.frequency); env(g,t,a?.7:.5,.003,1.8); c.connect(g); g.connect(o);
+                          c.start(t); m.start(t); c.stop(t+1.9); m.stop(t+1.9); }},
+    glass:{n:'ガラス',  f:(t,f,a,o)=>{ tone('sine',f*2,t,.35,.001,.35,o); tone('sine',f*5.33,t,.15,.001,.2,o); tone('sine',f*8.7,t,.06,.001,.1,o); }},
+    mokugyo:{n:'木魚',  f:(t,f,a,o)=>{ tone('sine',f*0.6,t,a?.9:.7,.001,.07,o,f*0.55); burst(t,.25,.02,'bandpass',f*2,4,o); }},
+    hyoshigi:{n:'拍子木',f:(t,f,a,o)=>{ burst(t,a?.9:.7,.035,'bandpass',2600,12,o); tone('sine',1900,t,.2,.001,.03,o); }},
+    taiko:{n:'太鼓',    f:(t,f,a,o)=>{ tone('sine',a?140:120,t,a?1:.85,.002,.45,o,48); burst(t,.2,.05,'lowpass',900,1,o); }},
+    tsuzumi:{n:'鼓',    f:(t,f,a,o)=>{ tone('sine',f*0.35,t,.8,.002,.3,o,f*0.5); burst(t,.3,.03,'bandpass',1800,3,o); }},
+    koto:{n:'琴（はじく）',f:(t,f,a,o)=>{ const s=ctx.createBufferSource(); s.buffer=pluckBuf(f*(a?0.5:1)); const g=ctx.createGain(); g.gain.value=a?.7:.55; s.connect(g); g.connect(o); s.start(t); }},
+    kuchibue:{n:'口笛',  f:(t,f,a,o)=>{ const os=ctx.createOscillator(),l=ctx.createOscillator(),lg=ctx.createGain(),g=ctx.createGain();
+                          os.frequency.value=f*1.5; l.frequency.value=5.5; lg.gain.value=f*0.02; l.connect(lg); lg.connect(os.frequency);
+                          env(g,t,.4,.04,.4); os.connect(g); g.connect(o); os.start(t); l.start(t); os.stop(t+.5); l.stop(t+.5); }},
+    jari:{n:'砂利',     f:(t,f,a,o)=>{ for(let i=0;i<4;i++) burst(t+Math.random()*.06,.35,.02+Math.random()*.03,'highpass',2500+Math.random()*3000,1,o); }},
+    ochiba:{n:'落ち葉', f:(t,f,a,o)=>burst(t,.35,.18,'bandpass',4000,2,o,800)},
+    bass:{n:'低音',     f:(t,f,a,o)=>{ const lp=ctx.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=600; lp.connect(o); tone('triangle',f/4,t,a?1:.8,.004,.35,lp); }},
+    pico:{n:'ピコ（8ビット風）',f:(t,f,a,o)=>{ tone('square',f,t,.18,.001,.05,o); tone('square',f*(a?2:1.5),t+.05,.18,.001,.09,o); }},
+    sine:{n:'まるい音',  f:(t,f,a,o)=>tone('sine',f,t,.5,.02,.5,o)},
+    kaze:{n:'風',       f:(t,f,a,o)=>{ const n=ctx.createBufferSource(); n.buffer=noise(); n.loop=true; const bp=ctx.createBiquadFilter(); bp.type='bandpass'; bp.Q.value=8;
+                          bp.frequency.setValueAtTime(f*0.8,t); bp.frequency.linearRampToValueAtTime(f*1.6,t+.4); const g=ctx.createGain(); env(g,t,.5,.12,.4);
+                          n.connect(bp); bp.connect(g); g.connect(o); n.start(t); n.stop(t+.6); }},
+  };
+  const VKEYS=Object.keys(VOICES);
+  (function fillVoices(){
+    const sel=$('voice'); if(!sel) return;
+    let keep='pon'; try{ const o=JSON.parse(localStorage.getItem('sanpo')||'{}'); if(o.voice) keep=o.voice; }catch(e){}
+    VKEYS.forEach(k=>{ const op=document.createElement('option'); op.value=k; op.textContent=VOICES[k].n; sel.insertBefore(op,sel.firstChild?sel.querySelector('[data-mode]'):null); });
+    if(keep) sel.value=keep;
+  })();
+  $('voice').addEventListener('change',()=>{ initAudio(); try{ctx.resume();}catch(e){} const v=$('voice').value; if(VOICES[v]) pop(false,false,v); });
+  let cycleVoice=VKEYS[0];
+  function pickVoice(accentStep){
+    const v=$('voice').value;
+    if(v==='random') return VKEYS[Math.floor(Math.random()*VKEYS.length)];
+    if(v==='cycle'){ if(accentStep||!VOICES[cycleVoice]) cycleVoice=VKEYS[Math.floor(Math.random()*VKEYS.length)]; return cycleVoice; }
+    return VOICES[v]?v:'pon';
+  }
+  let melo=2;
+  function pop(accent,newCycle,forceKey){
+    if(!ctx || !$('popOn').checked) return;
+    const t=ctx.currentTime+0.005, w=+$('water').value;
+    const jitter = 1 + (Math.random()*2-1)*0.35*w;
+    let semi=0; const sc=$('scale').value;
+    if(sc!=='none'){ const deg=sc.split(',').map(Number); melo+= (Math.random()<0.5?-1:1)*(Math.random()<0.7?1:2);
+      melo=Math.max(0,Math.min(deg.length*2-1,melo)); semi=deg[melo%deg.length]+12*Math.floor(melo/deg.length); if(accent) semi=0; }
+    const f = +$('pitch').value * Math.pow(2,semi/12) * (accent?0.5:1) * (sc==='none'?jitter:1+(jitter-1)*0.15);
+    const key = forceKey || pickVoice(newCycle);
+    try{ VOICES[key].f(t,f,accent,dry); }catch(e){}
+    if(w>0.02 && key==='pon'){
+      burst(t,0.5*w,0.12,'bandpass',800+Math.random()*1800*w,6+8*Math.random(),dry,(800+1800*w)*(2+w*2));
     }
   }
 
@@ -209,7 +283,7 @@
   function step(){
     const n=+$('cycle').value;
     const accent = n>0 && $('accentOn').checked && steps%n===0;
-    pop(accent);
+    pop(accent, n>0 ? steps%n===0 : steps%8===0);
     steps++;
     $('steps').textContent=steps;
     moveDot();
