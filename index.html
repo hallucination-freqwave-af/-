@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>気づきの散歩</title>
+<style>
+  :root{--bg:#0d0d0d;--fg:#d8d4cc;--dim:#5a5750;--red:#d23a2a}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Hiragino Sans",sans-serif}
+  main{max-width:440px;margin:0 auto;padding:24px 20px 60px}
+  h1{font-weight:300;font-size:18px;letter-spacing:.3em;margin:0 0 4px}
+  .sub{color:var(--dim);font-size:12px;margin-bottom:18px}
+  svg{display:block;width:100%;max-width:300px;margin:0 auto}
+  .count{text-align:center;font-size:12px;color:var(--dim);margin:6px 0 18px;letter-spacing:.15em}
+  .count b{color:var(--fg);font-weight:300;font-size:28px;display:block;letter-spacing:.05em}
+  button{width:100%;padding:16px;border:1px solid var(--fg);background:none;color:var(--fg);font-size:15px;letter-spacing:.3em;border-radius:2px}
+  button.on{border-color:var(--red);color:var(--red)}
+  button.small{padding:10px;font-size:12px;letter-spacing:.15em;border-color:var(--dim);color:var(--dim);margin-top:8px}
+  details{margin-top:22px;border-top:1px solid #222;padding-top:12px}
+  summary{font-size:13px;letter-spacing:.2em;color:var(--dim);list-style:none;cursor:pointer}
+  .row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:14px 0;font-size:13px}
+  .row label{flex:0 0 42%}
+  .row input[type=range]{flex:1;accent-color:var(--red)}
+  .row output{flex:0 0 40px;text-align:right;color:var(--dim);font-size:12px}
+  .row input[type=text],select{flex:1;background:#151515;color:var(--fg);border:1px solid #2a2a2a;padding:8px;font-size:14px;border-radius:2px}
+  input[type=checkbox]{width:20px;height:20px;accent-color:var(--red)}
+  .note{font-size:11px;color:var(--dim);line-height:1.7;margin-top:20px}
+  .msg{font-size:12px;color:var(--red);text-align:center;min-height:1.4em;margin-top:8px}
+</style>
+</head>
+<body>
+<main>
+  <h1>気づきの散歩</h1>
+  <div class="sub">歩くたびに鳴り、少し遅れて返ってくる</div>
+
+  <svg viewBox="0 0 200 200" aria-hidden="true">
+    <circle cx="100" cy="100" r="78" fill="none" stroke="#3a3833" stroke-width=".6"/>
+    <g id="ticks"></g>
+    <circle id="pulse" cx="100" cy="100" r="6" fill="none" stroke="#d8d4cc" stroke-width=".5" opacity="0"/>
+    <circle id="dot" cx="100" cy="22" r="3.2" fill="#d23a2a"/>
+  </svg>
+  <div class="count"><b id="steps">0</b>歩</div>
+
+  <button id="start">はじめる</button>
+  <button id="test" class="small">手で一歩を鳴らす（試し）</button>
+  <div class="msg" id="msg"></div>
+
+  <details open>
+    <summary>── 音</summary>
+    <div class="row"><label>踏んだ音</label><input type="checkbox" id="popOn" checked></div>
+    <div class="row"><label>音量</label><input type="range" id="vol" min="0" max="1" step="0.05" value="0.6"><output></output></div>
+    <div class="row"><label>音の高さ</label><input type="range" id="pitch" min="200" max="1200" step="10" value="660"><output></output></div>
+    <div class="row"><label>エコー</label><input type="checkbox" id="echoOn" checked></div>
+    <div class="row"><label>返ってくる間（秒）</label><input type="range" id="delay" min="0.08" max="0.9" step="0.01" value="0.32"><output></output></div>
+    <div class="row"><label>残響の長さ</label><input type="range" id="fb" min="0" max="0.85" step="0.01" value="0.5"><output></output></div>
+    <div class="row"><label>水たまりの揺らぎ</label><input type="range" id="water" min="0" max="1" step="0.05" value="0.3"><output></output></div>
+  </details>
+
+  <details>
+    <summary>── 数え方（区切り）</summary>
+    <div class="row"><label>何歩でひと巡り</label>
+      <select id="cycle">
+        <option value="0">区切らない</option>
+        <option value="4">4（四拍）</option>
+        <option value="7">7（七曜）</option>
+        <option value="12">12（十二支）</option>
+        <option value="20" selected>20（マヤ）</option>
+        <option value="60">60（バビロニア）</option>
+      </select></div>
+    <div class="row"><label>区切りの一歩を強く</label><input type="checkbox" id="accentOn" checked></div>
+  </details>
+
+  <details>
+    <summary>── 声</summary>
+    <div class="row"><label>言葉（,で順番に）</label><input type="text" id="words" value="気づき"></div>
+    <div class="row"><label>何歩に一回（0で無音）</label><input type="range" id="every" min="0" max="40" step="1" value="8"><output></output></div>
+    <div class="row"><label>声の大きさ</label><input type="range" id="vvol" min="0" max="1" step="0.05" value="0.7"><output></output></div>
+  </details>
+
+  <details>
+    <summary>── 感度</summary>
+    <div class="row"><label>一歩とみなす揺れ</label><input type="range" id="thr" min="0.6" max="5" step="0.1" value="1.8"><output></output></div>
+    <div class="row"><label>次の一歩までの最短（秒）</label><input type="range" id="gap" min="0.18" max="0.8" step="0.01" value="0.3"><output></output></div>
+  </details>
+
+  <div class="note">
+    ・画面がロックされると揺れが拾えなくなります。専用機なら「設定 → 画面表示と明るさ → 自動ロック → なし」に。<br>
+    ・iPhoneは最初に「動きと方向」の許可を求めてきます。許可してください。<br>
+    ・ポケットでも手持ちでも動きます。拾いすぎ／拾わなさすぎは「感度」で。
+  </div>
+</main>
+
+<script>
+(function(){
+  const $ = id => document.getElementById(id);
+  const ids = ['popOn','vol','pitch','echoOn','delay','fb','water','cycle','accentOn','words','every','vvol','thr','gap'];
+  // 設定の保存（使えない環境では黙って諦める）
+  function save(){ try{ const o={}; ids.forEach(k=>{const e=$(k); o[k]=e.type==='checkbox'?e.checked:e.value}); localStorage.setItem('sanpo',JSON.stringify(o)); }catch(e){} }
+  try{ const o=JSON.parse(localStorage.getItem('sanpo')||'{}'); ids.forEach(k=>{ if(o[k]===undefined) return; const e=$(k); if(e.type==='checkbox') e.checked=o[k]; else e.value=o[k]; }); }catch(e){}
+  document.querySelectorAll('input[type=range]').forEach(r=>{
+    const out=r.nextElementSibling; const f=()=>{ if(out) out.textContent=r.value; };
+    r.addEventListener('input',()=>{f();save();applyEcho();}); f();
+  });
+  ids.forEach(k=>$(k).addEventListener('change',()=>{save();applyEcho();drawTicks();}));
+
+  // ── 音の仕組み
+  let ctx=null, master, dry, delayNode, fbGain, wet, lp;
+  function initAudio(){
+    if(ctx) return;
+    const AC = window.AudioContext||window.webkitAudioContext;
+    ctx = new AC();
+    master = ctx.createGain(); master.connect(ctx.destination);
+    dry = ctx.createGain(); dry.connect(master);
+    delayNode = ctx.createDelay(2.0);
+    fbGain = ctx.createGain();
+    lp = ctx.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=2400;
+    wet = ctx.createGain();
+    dry.connect(delayNode); delayNode.connect(lp); lp.connect(fbGain); fbGain.connect(delayNode);
+    lp.connect(wet); wet.connect(master);
+    applyEcho();
+  }
+  function applyEcho(){
+    if(!ctx) return;
+    const t=ctx.currentTime;
+    master.gain.setTargetAtTime(+$('vol').value, t, .02);
+    delayNode.delayTime.setTargetAtTime(+$('delay').value, t, .05);
+    const on=$('echoOn').checked;
+    fbGain.gain.setTargetAtTime(on?+$('fb').value:0, t, .05);
+    wet.gain.setTargetAtTime(on?0.7:0, t, .05);
+  }
+  let noiseBuf=null;
+  function noise(){
+    if(noiseBuf) return noiseBuf;
+    noiseBuf = ctx.createBuffer(1, ctx.sampleRate*0.25, ctx.sampleRate);
+    const d=noiseBuf.getChannelData(0); for(let i=0;i<d.length;i++) d[i]=Math.random()*2-1;
+    return noiseBuf;
+  }
+  function pop(accent){
+    if(!ctx || !$('popOn').checked) return;
+    const t=ctx.currentTime, w=+$('water').value;
+    const base = +$('pitch').value * (accent?0.5:1);
+    const jitter = 1 + (Math.random()*2-1)*0.35*w;      // 水たまり：一歩ごとに音程が揺れる
+    const f0 = base*jitter*1.6, f1 = base*jitter;
+    // ポンッ：高めから一気に落ちる短い音
+    const o=ctx.createOscillator(), g=ctx.createGain();
+    o.type = accent ? 'triangle' : 'sine';
+    o.frequency.setValueAtTime(f0,t);
+    o.frequency.exponentialRampToValueAtTime(f1,t+0.06);
+    const peak = accent?0.9:0.6;
+    g.gain.setValueAtTime(0.0001,t);
+    g.gain.exponentialRampToValueAtTime(peak,t+0.005);
+    g.gain.exponentialRampToValueAtTime(0.0001,t+(accent?0.35:0.18));
+    o.connect(g); g.connect(dry); o.start(t); o.stop(t+0.4);
+    // 水音：揺らぎがあるときだけ、帯域を走らせたノイズを薄く重ねる
+    if(w>0.02){
+      const n=ctx.createBufferSource(); n.buffer=noise();
+      const bp=ctx.createBiquadFilter(); bp.type='bandpass'; bp.Q.value=6+8*Math.random();
+      const fs=800+Math.random()*1800*w;
+      bp.frequency.setValueAtTime(fs,t); bp.frequency.exponentialRampToValueAtTime(fs*(2+w*2),t+0.09);
+      const ng=ctx.createGain();
+      ng.gain.setValueAtTime(0.0001,t); ng.gain.exponentialRampToValueAtTime(0.5*w,t+0.008);
+      ng.gain.exponentialRampToValueAtTime(0.0001,t+0.12);
+      n.connect(bp); bp.connect(ng); ng.connect(dry); n.start(t); n.stop(t+0.15);
+    }
+  }
+
+  // ── 声
+  let wordIdx=0;
+  function speak(){
+    if(!('speechSynthesis' in window)) return;
+    const list=$('words').value.split(/[,、，]/).map(s=>s.trim()).filter(Boolean);
+    if(!list.length) return;
+    const u=new SpeechSynthesisUtterance(list[wordIdx%list.length]); wordIdx++;
+    u.lang='ja-JP'; u.rate=0.85; u.volume=+$('vvol').value;
+    speechSynthesis.cancel(); speechSynthesis.speak(u);
+  }
+
+  // ── 円の表示
+  const C=100, R=78;
+  function drawTicks(){
+    const n=+$('cycle').value, g=$('ticks'); g.innerHTML='';
+    if(!n) return;
+    for(let i=0;i<n;i++){
+      const a=i/n*Math.PI*2-Math.PI/2, r1=R-3, r2=R+(i===0?6:3);
+      const l=document.createElementNS('http://www.w3.org/2000/svg','line');
+      l.setAttribute('x1',C+r1*Math.cos(a)); l.setAttribute('y1',C+r1*Math.sin(a));
+      l.setAttribute('x2',C+r2*Math.cos(a)); l.setAttribute('y2',C+r2*Math.sin(a));
+      l.setAttribute('stroke',i===0?'#d8d4cc':'#3a3833'); l.setAttribute('stroke-width',i===0?'.8':'.5');
+      g.appendChild(l);
+    }
+  }
+  drawTicks();
+  function moveDot(){
+    const n=+$('cycle').value||16;
+    const a=(steps%n)/n*Math.PI*2-Math.PI/2;
+    $('dot').setAttribute('cx',C+R*Math.cos(a)); $('dot').setAttribute('cy',C+R*Math.sin(a));
+    const p=$('pulse'); p.style.transition='none'; p.setAttribute('r',6); p.setAttribute('opacity',.9);
+    requestAnimationFrame(()=>requestAnimationFrame(()=>{
+      p.style.transition='r .9s ease-out, opacity .9s ease-out'; p.setAttribute('r',70); p.setAttribute('opacity',0);
+    }));
+  }
+
+  // ── 一歩
+  let steps=0;
+  function step(){
+    const n=+$('cycle').value;
+    const accent = n>0 && $('accentOn').checked && steps%n===0;
+    pop(accent);
+    steps++;
+    $('steps').textContent=steps;
+    moveDot();
+    const every=+$('every').value;
+    if(every>0 && steps%every===0) speak();
+  }
+
+  // ── 揺れから一歩を拾う
+  let base=9.8, armed=true, lastStep=0;
+  function onMotion(e){
+    const a=e.accelerationIncludingGravity; if(!a||a.x==null) return;
+    const m=Math.sqrt(a.x*a.x+a.y*a.y+a.z*a.z);
+    base = base*0.95 + m*0.05;                 // ゆっくり追う基準線（重力分）
+    const d = m-base, thr=+$('thr').value, now=performance.now();
+    if(armed && d>thr && now-lastStep > +$('gap').value*1000){
+      armed=false; lastStep=now; step();
+    } else if(!armed && d<thr*0.3){ armed=true; }
+  }
+
+  let running=false;
+  async function start(){
+    initAudio();
+    try{ await ctx.resume(); }catch(e){}
+    // iOSで声を使えるように、最初の操作で空の発声をしておく
+    try{ const u=new SpeechSynthesisUtterance(' '); u.volume=0; speechSynthesis.speak(u); }catch(e){}
+    if(typeof DeviceMotionEvent!=='undefined' && typeof DeviceMotionEvent.requestPermission==='function'){
+      try{
+        const r=await DeviceMotionEvent.requestPermission();
+        if(r!=='granted'){ $('msg').textContent='動きの許可が出ませんでした。設定 → Safari →「モーションと画面の向きのアクセス」を確認。'; return; }
+      }catch(e){ $('msg').textContent='許可を求められませんでした（https で開いているか確認）'; return; }
+    }
+    window.addEventListener('devicemotion',onMotion);
+    running=true; $('start').textContent='とめる'; $('start').classList.add('on'); $('msg').textContent='';
+    setTimeout(()=>{ if(running && steps===0 && base===9.8) $('msg').textContent='揺れが届いていません。このブラウザ／開き方ではセンサーが使えないかもしれません。'; },3000);
+  }
+  function stop(){
+    window.removeEventListener('devicemotion',onMotion);
+    running=false; $('start').textContent='はじめる'; $('start').classList.remove('on');
+  }
+  $('start').addEventListener('click',()=> running?stop():start());
+  $('test').addEventListener('click',async()=>{ initAudio(); try{await ctx.resume();}catch(e){} step(); });
+})();
+</script>
+</body>
+</html>
