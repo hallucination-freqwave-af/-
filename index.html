@@ -66,6 +66,8 @@
       </select></div>
     <div class="row"><label>音量</label><input type="range" id="vol" min="0" max="1" step="0.05" value="0.6"><output></output></div>
     <div class="row"><label>音の高さ</label><input type="range" id="pitch" min="200" max="1200" step="10" value="660"><output></output></div>
+    <div class="row"><label>パシッと切る（確率）</label><input type="range" id="cut" min="0" max="0.6" step="0.05" value="0.15"><output></output></div>
+    <div class="row"><label>切るとき残響も消す</label><input type="checkbox" id="cutEcho" checked></div>
     <div class="row"><label>エコー</label><input type="checkbox" id="echoOn" checked></div>
     <div class="row"><label>返ってくる間（秒）</label><input type="range" id="delay" min="0.08" max="0.9" step="0.01" value="0.32"><output></output></div>
     <div class="row"><label>残響の長さ</label><input type="range" id="fb" min="0" max="0.85" step="0.01" value="0.5"><output></output></div>
@@ -102,7 +104,7 @@
 <script>
 (function(){
   const $ = id => document.getElementById(id);
-  const ids = ['voice','scale','popOn','vol','pitch','echoOn','delay','fb','water','cycle','accentOn','thr','gap'];
+  const ids = ['voice','scale','cut','cutEcho','popOn','vol','pitch','echoOn','delay','fb','water','cycle','accentOn','thr','gap'];
   // 設定の保存（使えない環境では黙って諦める）
   function save(){ try{ const o={}; ids.forEach(k=>{const e=$(k); o[k]=e.type==='checkbox'?e.checked:e.value}); localStorage.setItem('sanpo',JSON.stringify(o)); }catch(e){} }
   try{ const o=JSON.parse(localStorage.getItem('sanpo')||'{}'); ids.forEach(k=>{ if(o[k]===undefined) return; const e=$(k); if(e.type==='checkbox') e.checked=o[k]; else e.value=o[k]; }); }catch(e){}
@@ -237,7 +239,7 @@
     if(v==='cycle'){ if(accentStep||!VOICES[cycleVoice]) cycleVoice=VKEYS[Math.floor(Math.random()*VKEYS.length)]; return cycleVoice; }
     return VOICES[v]?v:'pon';
   }
-  let melo=2;
+  let melo=2, active=[];
   function pop(accent,newCycle,forceKey){
     if(!ctx || !$('popOn').checked) return;
     const t=ctx.currentTime+0.005, w=+$('water').value;
@@ -247,9 +249,26 @@
       melo=Math.max(0,Math.min(deg.length*2-1,melo)); semi=deg[melo%deg.length]+12*Math.floor(melo/deg.length); if(accent) semi=0; }
     const f = +$('pitch').value * Math.pow(2,semi/12) * (accent?0.5:1) * (sc==='none'?jitter:1+(jitter-1)*0.15);
     const key = forceKey || pickVoice(newCycle);
-    try{ VOICES[key].f(t,f,accent,dry); }catch(e){}
+    // 一歩ごとに専用の通り道をつくる（あとで「切る」ため）
+    const bus=ctx.createGain(); bus.gain.value=1; bus.connect(dry);
+    active.push({g:bus,t:t}); active=active.filter(a=>t-a.t<4);
+    try{ VOICES[key].f(t,f,accent,bus); }catch(e){}
     if(w>0.02 && key==='pon'){
-      burst(t,0.5*w,0.12,'bandpass',800+Math.random()*1800*w,6+8*Math.random(),dry,(800+1800*w)*(2+w*2));
+      burst(t,0.5*w,0.12,'bandpass',800+Math.random()*1800*w,6+8*Math.random(),bus,(800+1800*w)*(2+w*2));
+    }
+    // ときどき、パシッと切る
+    if(!forceKey && Math.random() < +$('cut').value){
+      const tc = t + 0.07 + Math.random()*0.15;
+      active.forEach(a=>{ a.g.gain.setValueAtTime(1,tc); a.g.gain.linearRampToValueAtTime(0,tc+0.008); });
+      active=[];
+      if($('cutEcho').checked && $('echoOn').checked){
+        wet.gain.cancelScheduledValues(tc); fbGain.gain.cancelScheduledValues(tc);
+        wet.gain.setValueAtTime(0.7,tc); wet.gain.linearRampToValueAtTime(0,tc+0.008);
+        fbGain.gain.setValueAtTime(+$('fb').value,tc); fbGain.gain.linearRampToValueAtTime(0,tc+0.008);
+        const back = tc + Math.max(0.25, +$('delay').value*1.2);
+        wet.gain.setValueAtTime(0,back); wet.gain.linearRampToValueAtTime(0.7,back+0.01);
+        fbGain.gain.setValueAtTime(0,back); fbGain.gain.linearRampToValueAtTime(+$('fb').value,back+0.01);
+      }
     }
   }
 
